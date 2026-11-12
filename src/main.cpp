@@ -5,6 +5,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <commdlg.h>
+#include <mmsystem.h>
 #include <shobjidl.h>
 #include <mfapi.h>
 #include <mferror.h>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
@@ -27,7 +29,7 @@ typedef long long i64;
 const bool kZoomCentersOnCursor = true;   // spec: the spot under the mouse becomes the centre of the view. false = keep it under the mouse
 const int  kMp3Kbps   = 256;
 const int  kBlock     = 128;              // frames per peak block
-const int  kRuler     = 26, kTab = 28, kTabW = 170, kStatus = 22, kGrip = 9, kTol = 6;
+const int  kRuler     = 26, kBar = 36, kTab = 28, kTabW = 170, kStatus = 22, kGrip = 9, kTol = 6;
 const wchar_t* kTitle = L"SFX-Parser";
 
 enum { IDM_OPEN = 101, IDM_SAVE, IDM_EXIT, IDM_CLEAR, IDM_HELP,
@@ -60,6 +62,7 @@ int g_mouseX = -1;
 struct Hit { int cut = -1; bool end = false; };
 Hit g_hover, g_drag; int g_dragOff = 0;
 bool g_gripDrag = false; int g_gripY = 0; double g_gripGain = 1;
+bool g_btnHover = false, g_panMoved = false; int g_panY = 0;
 bool g_pan = false; int g_panX = 0; double g_panVs = 0;
 
 // ----------------------------------------------------------------------------------------- helpers
@@ -295,7 +298,7 @@ void removeMarker(const Hit& h) {
 
 // ----------------------------------------------------------------------------------------- view
 RECT clientRc() { RECT r; GetClientRect(g_wnd, &r); return r; }
-int waveTop() { return kTab + kRuler; }
+int waveTop() { return kBar + kTab + kRuler; }
 int waveBot() { RECT r = clientRc(); return std::max(waveTop() + 20, (int)r.bottom - kStatus - kGrip); }
 int viewW()   { RECT r = clientRc(); return std::max(1, (int)r.right); }
 double frameAt(int x) { return g_vs + x * g_spp; }
@@ -477,6 +480,49 @@ void paintTabs(HDC dc, int W) {
     }
 }
 
+// ----------------------------------------------------------------------------------------- toolbar
+RECT saveBtnRect() { return RECT{8, 5, 190, kBar - 5}; }
+bool saveEnabled() { return g_doc && !g_cuts.empty() && !g_exporting; }
+void paintToolbar(HDC dc, int W) {
+    HBRUSH b = CreateSolidBrush(RGB(30, 32, 37)); RECT r{0, 0, W, kBar}; FillRect(dc, &r, b); DeleteObject(b);
+    const RECT br = saveBtnRect(); const bool en = saveEnabled();
+    HBRUSH bb = CreateSolidBrush(!en ? RGB(44, 47, 54) : (g_btnHover ? RGB(70, 130, 190) : RGB(52, 100, 150)));
+    HPEN np = (HPEN)GetStockObject(NULL_PEN); HGDIOBJ op = SelectObject(dc, np), ob = SelectObject(dc, bb);
+    RoundRect(dc, br.left, br.top, br.right, br.bottom, 8, 8);
+    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(bb);
+    std::wstring t = L"Save Subsamples";
+    if (g_doc && !g_cuts.empty()) t += L" (" + std::to_wstring(g_cuts.size()) + L")";
+    SetTextColor(dc, en ? RGB(240, 245, 252) : RGB(120, 124, 134)); SetTextAlign(dc, TA_CENTER | TA_TOP);
+    TextOutW(dc, (br.left + br.right) / 2, br.top + 7, t.c_str(), (int)t.size());
+}
+bool inSaveBtn(int x, int y) { RECT r = saveBtnRect(); return x >= r.left && x < r.right && y >= r.top && y < r.bottom; }
+
+// ----------------------------------------------------------------------------------------- playback
+std::vector<uint8_t> g_playBuf;
+int g_playCut = -1;
+void stopPlay() { PlaySoundW(nullptr, nullptr, 0); g_playCut = -1; }
+void playCutAt(int x) {
+    if (!g_doc) return;
+    const i64 f = (i64)std::floor(frameAt(x));
+    int ci = -1;
+    for (size_t i = 0; i < g_cuts.size(); i++) if (f >= g_cuts[i].s && f < g_cuts[i].e) ci = (int)i;
+    if (ci < 0) { stopPlay(); return; }
+    const Cut& c = g_cuts[ci];
+    const i64 n = c.e - c.s; const uint32_t bytes = (uint32_t)(n * 4);
+    stopPlay();
+    g_playBuf.assign(44 + bytes, 0);
+    uint8_t* p = g_playBuf.data();
+    auto put32 = [&](int o, uint32_t v) { memcpy(p + o, &v, 4); };
+    auto put16 = [&](int o, uint16_t v) { memcpy(p + o, &v, 2); };
+    memcpy(p, "RIFF", 4); put32(4, 36 + bytes); memcpy(p + 8, "WAVEfmt ", 8); put32(16, 16); put16(20, 1); put16(22, 2);
+    put32(24, g_doc->rate); put32(28, g_doc->rate * 4); put16(32, 4); put16(34, 16); memcpy(p + 36, "data", 4); put32(40, bytes);
+    int16_t* o = (int16_t*)(p + 44);
+    const float* s = &g_doc->pcm[(size_t)c.s * 2];
+    for (i64 i = 0; i < n * 2; i++) { float v = std::max(-1.f, std::min(1.f, s[i])); o[i] = (int16_t)std::lround(v * 32767.f); }
+    PlaySoundW((LPCWSTR)g_playBuf.data(), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+    g_playCut = ci;
+}
+
 void paintAll(HDC out) {
     RECT cr = clientRc(); const int W = cr.right, H = cr.bottom;
     if (!g_bmp || g_bmpW != W || g_bmpH != H) {
@@ -488,8 +534,9 @@ void paintAll(HDC out) {
     SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
     HBRUSH bg = CreateSolidBrush(RGB(22, 24, 28)); FillRect(dc, &cr, bg); DeleteObject(bg);
 
-    SetViewportOrgEx(dc, 0, kTab, nullptr); paintRuler(dc, W); SetViewportOrgEx(dc, 0, 0, nullptr);
-    paintTabs(dc, W);
+    SetViewportOrgEx(dc, 0, kBar + kTab, nullptr); paintRuler(dc, W);
+    SetViewportOrgEx(dc, 0, kBar, nullptr); paintTabs(dc, W);
+    SetViewportOrgEx(dc, 0, 0, nullptr); paintToolbar(dc, W);
     paintWave(dc, W);
 
     // grip (bottom border of the waveform: drag = vertical scale)
@@ -664,12 +711,13 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         const int x = (short)LOWORD(l), y = (short)HIWORD(l);
         SetFocus(h);
         if (!g_doc) return 0;
-        if (y < kTab) {
+        if (y < kBar) { if (m == WM_LBUTTONDOWN && inSaveBtn(x, y) && saveEnabled()) doSave(); return 0; }
+        if (y < kBar + kTab) {
             bool cl; const int ti = tabAt(x, cl);
             if (ti >= 0 && (cl || m == WM_MBUTTONDOWN)) closeTab(ti); else if (ti >= 0 && m == WM_LBUTTONDOWN) switchTab(ti);
             return 0;
         }
-        if (m == WM_MBUTTONDOWN) { g_pan = true; g_panX = x; g_panVs = g_vs; SetCapture(h); return 0; }
+        if (m == WM_MBUTTONDOWN) { g_pan = true; g_panMoved = false; g_panY = y; g_panX = x; g_panVs = g_vs; SetCapture(h); return 0; }
         if (m == WM_LBUTTONDOWN && y >= waveBot() && y < waveBot() + kGrip) { g_gripDrag = true; g_gripY = y; g_gripGain = g_gain; SetCapture(h); InvalidateRect(h, nullptr, FALSE); return 0; }
         if (y < waveTop() || y >= waveBot()) return 0;
         if (m == WM_LBUTTONDOWN) {
@@ -690,23 +738,27 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEMOVE: {
         const int x = (short)LOWORD(l), y = (short)HIWORD(l);
         g_mouseX = x;
+        { const bool hb = inSaveBtn(x, y) && saveEnabled(); if (hb != g_btnHover) g_btnHover = hb; }
         if (g_gripDrag) { g_gain = std::max(0.1, std::min(200.0, g_gripGain * std::pow(1.012, g_gripY - y))); }
-        else if (g_pan) { g_vs = g_panVs - (x - g_panX) * g_spp; clampView(); updateScroll(); }
+        else if (g_pan) { if (std::abs(x - g_panX) > 3) g_panMoved = true; g_vs = g_panVs - (x - g_panX) * g_spp; clampView(); updateScroll(); }
         else if (g_drag.cut >= 0) { moveMarker(g_drag, (i64)std::llround(frameAt(x + g_dragOff))); }
         else g_hover = (g_doc && y >= waveTop() && y < waveBot()) ? hitTest(x, (GetKeyState(VK_CONTROL) & 0x8000) != 0) : Hit();
         InvalidateRect(h, nullptr, FALSE); return 0; }
     case WM_LBUTTONUP: case WM_MBUTTONUP:
+        if (m == WM_MBUTTONUP && g_pan && !g_panMoved && g_panY >= waveTop() && g_panY < waveBot()) playCutAt((short)LOWORD(l));
         if (g_drag.cut >= 0 || g_gripDrag || g_pan) ReleaseCapture();
         g_drag = Hit(); g_gripDrag = false; g_pan = false; InvalidateRect(h, nullptr, FALSE); return 0;
     case WM_MOUSELEAVE: g_mouseX = -1; return 0;
     case WM_KEYDOWN:
         if (w == VK_DELETE && g_hover.cut >= 0 && g_drag.cut < 0) { removeMarker(g_hover); g_hover = Hit(); InvalidateRect(h, nullptr, FALSE); }
+        else if (w == VK_SPACE) { POINT pt; GetCursorPos(&pt); ScreenToClient(h, &pt); if (pt.y >= waveTop() && pt.y < waveBot()) playCutAt(pt.x); else stopPlay(); }
         else if (w == VK_HOME) { fitAll(); InvalidateRect(h, nullptr, FALSE); }
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(l) == HTCLIENT) {
             POINT pt; GetCursorPos(&pt); ScreenToClient(h, &pt);
             LPCWSTR c = IDC_ARROW;
+            if (pt.y < kBar && inSaveBtn(pt.x, pt.y) && saveEnabled()) c = IDC_HAND;
             if (g_gripDrag || (pt.y >= waveBot() && pt.y < waveBot() + kGrip)) c = IDC_SIZENS;
             else if (g_pan) c = IDC_SIZEALL;
             else if (g_drag.cut >= 0 || (g_doc && pt.y >= waveTop() && pt.y < waveBot() && hitTest(pt.x, (GetKeyState(VK_CONTROL) & 0x8000) != 0).cut >= 0)) c = IDC_SIZEWE;
@@ -715,7 +767,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }
         break;
     case WM_GETMINMAXINFO: ((MINMAXINFO*)l)->ptMinTrackSize = {480, 260}; return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY: stopPlay(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(h, m, w, l);
 }
