@@ -408,12 +408,14 @@ void paintWave(HDC dc, int W) {
     SelectObject(dc, old); DeleteObject(cl);
 
     auto yOf = [&](float v) { int y = mid - (int)std::lround(v * g_gain * half); return std::max(top, std::min(bot - 1, y)); };
-    HPEN wp = CreatePen(PS_SOLID, 1, RGB(110, 190, 245)); old = SelectObject(dc, wp);
+    HPEN wp = CreatePen(PS_SOLID, 1, RGB(110, 190, 245)), dimP = CreatePen(PS_SOLID, 1, RGB(62, 78, 96)), clipP = CreatePen(PS_SOLID, 1, RGB(255, 90, 80));
+    old = SelectObject(dc, wp);
+    auto volAt = [&](i64 f) { for (auto& c : g_cuts) if (f >= c.s && f < c.e) return c.vol; return 1.f; };
     if (g_spp < 1.0) {                                     // below one sample per pixel: connect the samples
         const i64 a = std::max<i64>(0, (i64)std::floor(g_vs)), z = std::min(d.frames - 1, (i64)std::ceil(g_vs + W * g_spp) + 1);
         bool first = true;
         for (i64 i = a; i <= z; i++) {
-            const float v = (d.pcm[(size_t)i * 2] + d.pcm[(size_t)i * 2 + 1]) * 0.5f;
+            const float v = (d.pcm[(size_t)i * 2] + d.pcm[(size_t)i * 2 + 1]) * 0.5f * volAt(i);
             const int x = xOf(i), y = yOf(v);
             if (first) { MoveToEx(dc, x, y, nullptr); first = false; } else LineTo(dc, x, y);
             if (g_spp < 0.2) { RECT r{x - 2, y - 2, x + 3, y + 3}; FillRect(dc, &r, (HBRUSH)GetStockObject(WHITE_BRUSH)); }
@@ -430,11 +432,18 @@ void paintWave(HDC dc, int W) {
             } else {
                 for (i64 i = fa * 2; i < fb * 2; i++) { float v = d.pcm[(size_t)i]; mn = std::min(mn, v); mx = std::max(mx, v); }
             }
-            int y0 = yOf(mx), y1 = yOf(mn); if (y1 <= y0) y1 = y0 + 1;
+            const float vol = volAt(fa);
+            if (vol != 1.f) {                                  // faint original under the volume-scaled wave
+                SelectObject(dc, dimP);
+                int o0 = yOf(mx), o1 = yOf(mn); if (o1 <= o0) o1 = o0 + 1;
+                MoveToEx(dc, x, o0, nullptr); LineTo(dc, x, o1);
+            }
+            SelectObject(dc, std::max(std::fabs(mn), std::fabs(mx)) * vol > 1.0005f ? clipP : wp);   // red where the new volume clips
+            int y0 = yOf(mx * vol), y1 = yOf(mn * vol); if (y1 <= y0) y1 = y0 + 1;
             MoveToEx(dc, x, y0, nullptr); LineTo(dc, x, y1);
         }
     }
-    SelectObject(dc, old); DeleteObject(wp);
+    SelectObject(dc, old); DeleteObject(wp); DeleteObject(dimP); DeleteObject(clipP);
 
     // markers
     for (size_t i = 0; i < g_cuts.size(); i++) {
