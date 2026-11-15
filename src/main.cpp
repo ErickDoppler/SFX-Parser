@@ -1289,11 +1289,13 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (w == VK_DELETE && g_hover.cut >= 0 && g_drag.cut < 0) { removeMarker(g_hover); g_hover = Hit(); InvalidateRect(h, nullptr, FALSE); }
         else if (w == VK_SPACE) {
             if (l & 0x40000000) return 0;                                    // ignore key repeat
-            if (g_eng.active) stopPlay();                                    // space while playing stops
-            else {
-                POINT pt; GetCursorPos(&pt); ScreenToClient(h, &pt);
-                if (!(pt.y >= waveTop() && pt.y < waveBot() && playCutAt(pt.x))) togglePlay();
-            }
+            POINT pt; GetCursorPos(&pt); ScreenToClient(h, &pt);
+            const bool inWave = pt.y >= waveTop() && pt.y < waveBot();
+            const int under = inWave ? cutAtFrame((i64)std::floor(frameAt(pt.x))) : -1;
+            if (g_eng.active) {
+                if (under >= 0 && under != g_eng.cutId) playCutAt(pt.x);    // another subsample under the mouse: switch to it at once
+                else stopPlay();                                             // same one (or none): space stops
+            } else if (!(under >= 0 && playCutAt(pt.x))) togglePlay();
             InvalidateRect(h, nullptr, FALSE);
         }
         else if (w == VK_ESCAPE) stopPlay();
