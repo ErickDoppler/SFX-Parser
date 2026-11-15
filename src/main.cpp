@@ -1110,6 +1110,39 @@ void doSave(bool asNew = false) {
     }).detach();
 }
 
+// Space / W: play the subsample under the mouse; while playing, another subsample under the mouse takes over at once,
+// otherwise it pauses in place (the play marker stays) and pressing again resumes
+void spaceAction(HWND h) {
+    POINT pt; GetCursorPos(&pt); ScreenToClient(h, &pt);
+    const bool inWave = pt.y >= waveTop() && pt.y < waveBot();
+    const int under = inWave ? cutAtFrame((i64)std::floor(frameAt(pt.x))) : -1;
+    if (g_eng.active) {
+        if (under >= 0 && under != g_eng.cutId) playCutAt(pt.x);
+        else togglePlay();
+    } else if (!(under >= 0 && playCutAt(pt.x))) togglePlay();
+    InvalidateRect(h, nullptr, FALSE);
+}
+// S: stop (marker back to the start) or start the target from its start
+void startStop() {
+    if (g_eng.active) { stopPlay(); return; }
+    const int id = playTarget();
+    if (id >= 0) playCut(id, (double)cutById(id)->s, 1);
+}
+// Q / E: +-2% volume (linear, of unity) of the last played subsample; quick presses merge into one undo step
+void stepVol(int dir) {
+    const int id = volTarget();
+    Cut* c = cutById(id);
+    if (!c) return;
+    static unsigned long long tick = 0;
+    const float old = c->vol, nv = std::max(0.001f, old + 0.02f * dir);
+    setVol(id, nv);
+    const unsigned long long now = GetTickCount64();
+    if (!g_undo.empty() && g_redo.empty() && g_undo.back().id == id && now - tick < 1500) g_undo.back().newV = nv;
+    else pushFx(id, old, nv);
+    tick = now;
+    InvalidateRect(g_wnd, nullptr, FALSE);
+}
+
 void onBtn(int b) {
     switch (b) {
     case B_OPEN: doOpen(); break;
@@ -1147,7 +1180,14 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 L"Delete while hovering a marker: remove it\n\n"
                 L"Mouse wheel: zoom   Shift+wheel / middle drag: scroll\n"
                 L"Ctrl+wheel or drag the bar under the waveform: vertical scale (double-click resets)\n"
-                L"Home: show the whole file\n\n"
+                L"Home: show the whole file
+
+"
+                L"Keys: Space/W play or pause   S stop/start from the beginning   A/D previous/next subsample
+"
+                L"Q/E volume +2%/-2%   F save   R save as   Z/C fast backwards/forward   Esc stop
+
+"
                 L"Cuts are saved as MP3, 256 kbps.", L"Help", MB_ICONINFORMATION);
             break;
         }
@@ -1287,17 +1327,17 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return 0;
     case WM_KEYDOWN:
         if (w == VK_DELETE && g_hover.cut >= 0 && g_drag.cut < 0) { removeMarker(g_hover); g_hover = Hit(); InvalidateRect(h, nullptr, FALSE); }
-        else if (w == VK_SPACE) {
-            if (l & 0x40000000) return 0;                                    // ignore key repeat
-            POINT pt; GetCursorPos(&pt); ScreenToClient(h, &pt);
-            const bool inWave = pt.y >= waveTop() && pt.y < waveBot();
-            const int under = inWave ? cutAtFrame((i64)std::floor(frameAt(pt.x))) : -1;
-            if (g_eng.active) {
-                if (under >= 0 && under != g_eng.cutId) playCutAt(pt.x);    // another subsample under the mouse: switch to it at once
-                else stopPlay();                                             // same one (or none): space stops
-            } else if (!(under >= 0 && playCutAt(pt.x))) togglePlay();
-            InvalidateRect(h, nullptr, FALSE);
-        }
+        else if (GetKeyState(VK_CONTROL) & 0x8000) { /* Ctrl combos are menu accelerators */ }
+        else if (w == VK_SPACE || w == 'W') { if (!(l & 0x40000000)) spaceAction(h); }
+        else if (w == 'S') { if (!(l & 0x40000000)) startStop(); }
+        else if (w == 'A') { if (!(l & 0x40000000)) jump(-1); }
+        else if (w == 'D') { if (!(l & 0x40000000)) jump(1); }
+        else if (w == 'Q') stepVol(+1);
+        else if (w == 'E') stepVol(-1);
+        else if (w == 'F') { if (!(l & 0x40000000)) doSave(false); }
+        else if (w == 'R') { if (!(l & 0x40000000)) doSave(true); }
+        else if (w == 'Z') { if (!(l & 0x40000000)) fastPlay(-3); }
+        else if (w == 'C') { if (!(l & 0x40000000)) fastPlay(3); }
         else if (w == VK_ESCAPE) stopPlay();
         else if (w == VK_HOME) { fitAll(); InvalidateRect(h, nullptr, FALSE); }
         return 0;

@@ -21,3 +21,7 @@ Pure C++ / Win32, no dependencies (decoding and MP3 encoding use Windows Media F
 
 ## License
 MIT, see [LICENSE](LICENSE).
+
+## Keys
+Space / W play or pause in place (over another subsample: switch to it) - S stop or start from the beginning - A / D previous / next subsample -
+Q / E volume +2% / -2% - F save all - R save all as - Z / C fast backwards / forward - Esc stop - Delete removes the hovered marker.
