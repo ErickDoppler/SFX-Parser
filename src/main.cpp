@@ -1180,14 +1180,9 @@ LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 L"Delete while hovering a marker: remove it\n\n"
                 L"Mouse wheel: zoom   Shift+wheel / middle drag: scroll\n"
                 L"Ctrl+wheel or drag the bar under the waveform: vertical scale (double-click resets)\n"
-                L"Home: show the whole file
-
-"
-                L"Keys: Space/W play or pause   S stop/start from the beginning   A/D previous/next subsample
-"
-                L"Q/E volume +2%/-2%   F save   R save as   Z/C fast backwards/forward   Esc stop
-
-"
+                L"Home: show the whole file\n\n"
+                L"Keys: Space/W play or pause   S stop/start from the beginning   A/D previous/next subsample\n"
+                L"Q/E volume +2%/-2%   F save   R save as   Z/C fast backwards/forward   Esc stop\n\n"
                 L"Cuts are saved as MP3, 256 kbps.", L"Help", MB_ICONINFORMATION);
             break;
         }
