@@ -7,8 +7,8 @@ mark start and end points on the waveform, and save every cut as a numbered 256 
 - Left click: new start point. Right click: new end point. Drag a marker to move it (Ctrl picks the start when markers overlap).
 - Delete while hovering a marker removes it.
 - Mouse wheel zooms around the cursor; Shift+wheel or middle drag scrolls; Ctrl+wheel or the bar under the waveform scales vertically.
-- Space or middle click (without dragging) plays the subsample under the mouse; Space elsewhere stops playback.
-- The Save Subsamples button above the tabs saves the active tab only.
+- Toolbar: open, save all subsamples, save as (new name, then folder), undo/redo of volume effects, previous/next subsample, 3x fast backward/forward, play/pause, stop, volume (saved with the subsample) and maximize volume. Hovering a button highlights the subsamples it will affect.
+- Space or middle click plays the subsample under the mouse; Space while playing stops. The yellow play marker is draggable. Saving stops playback.
 - Drop files on the window, or select several in File > Open.
 - File > Save Cuts writes `OriginalName_01.mp3`, `OriginalName_02.mp3`, ...
 
