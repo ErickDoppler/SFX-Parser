@@ -1,5 +1,7 @@
 # SFX-Parser
 
+![SFX-Parser](docs/screenshot.png)
+
 Windows tool for cutting sound effects out of long recordings. Open WAV / MP3 / FLAC files (each in its own tab),
 mark start and end points on the waveform, and save every cut as a numbered 256 kbps MP3.
 
